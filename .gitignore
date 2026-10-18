@@ -1,0 +1,18 @@
+# Personal records and private calendar configuration
+Data/
+qa/
+demo/data/
+*.ics
+*.dat
+*.bak
+*.tmp
+*.log
+.env
+.env.*
+
+# Local runtime, builds and diagnostics
+vendor/node.exe
+*.exe
+*.pdb
+last-error.txt
+test-results.txt
