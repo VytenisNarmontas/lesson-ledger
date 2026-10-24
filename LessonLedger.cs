@@ -74,6 +74,31 @@ namespace LessonLedger {
     public string SyncedUtc { get; set; }
     public CalendarCache() { Events = new List<ScheduledLesson>(); }
   }
+  public class UpcomingLesson {
+    public string Key { get; set; }
+    public DateTime StartUtc { get; set; }
+    public string StudentName { get; set; }
+    public string CalendarTitle { get; set; }
+    public decimal? ExpectedPay { get; set; }
+    public string PriceNote { get; set; }
+  }
+  public static class UpcomingLessons {
+    public static List<UpcomingLesson> Build(Ledger ledger, CalendarCache cache, DateTime nowUtc) {
+      DateTime from = Time.TrackingStart(ledger.Data.Settings);
+      if (nowUtc > from) from = nowUtc;
+      var rows = new List<UpcomingLesson>();
+      foreach (var lesson in cache == null || cache.Events == null ? new List<ScheduledLesson>() : cache.Events) {
+        DateTime start = Time.Utc(lesson.StartUtc);
+        if (start < from) continue;
+        var student = ledger.Match(lesson.StudentName);
+        rows.Add(new UpcomingLesson { Key = lesson.Key, StartUtc = start,
+          StudentName = student == null ? lesson.StudentName : student.Name, CalendarTitle = lesson.Title,
+          ExpectedPay = student != null && student.Price > 0 ? (decimal?)student.Price : null,
+          PriceNote = student == null ? "Student not added" : student.Price <= 0 ? "Price not set" : "" });
+      }
+      return rows.OrderBy(r => r.StartUtc).ThenBy(r => r.StudentName, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Key, StringComparer.Ordinal).ToList();
+    }
+  }
   public static class Json {
     public static JavaScriptSerializer Serializer() { return new JavaScriptSerializer { MaxJsonLength = 64 * 1024 * 1024 }; }
     public static string Write(object value) { return Serializer().Serialize(value); }
@@ -424,9 +449,65 @@ namespace LessonLedger {
     }
     static string Money(decimal amount, string currency) { return amount.ToString("0.00", CultureInfo.InvariantCulture) + " " + currency; }
   }
+  public class UpcomingLessonsDialog : Form {
+    readonly Ledger ledger;
+    readonly Func<CalendarCache> getCache;
+    readonly Func<bool> isSyncing;
+    readonly ListView list;
+    readonly Label details, empty;
+    readonly System.Windows.Forms.Timer refresh = new System.Windows.Forms.Timer();
+    string lastRows = "";
+    public UpcomingLessonsDialog(Ledger current, Func<CalendarCache> calendar, Func<bool> syncing) {
+      ledger = current; getCache = calendar; isSyncing = syncing;
+      Theme.Dialog(this, "Upcoming lessons", 880, 540);
+      Controls.Add(Theme.Label("UPCOMING LESSONS", 20, 18, 840, 28, 11, Theme.Accent, FontStyle.Bold));
+      details = Theme.Label("", 20, 55, 840, 42, 9, Theme.Muted, FontStyle.Regular); Controls.Add(details);
+      list = new ListView { Location = new Point(20, 104), Size = new Size(840, 340), View = View.Details,
+        FullRowSelect = true, MultiSelect = false, BackColor = Theme.Card, ForeColor = Theme.Light,
+        BorderStyle = BorderStyle.None, HideSelection = false, HeaderStyle = ColumnHeaderStyle.Nonclickable };
+      list.Columns.Add("Date", 150); list.Columns.Add("Time", 70); list.Columns.Add("Student", 145);
+      list.Columns.Add("Expected pay", 125); list.Columns.Add("Calendar event", 330); Controls.Add(list);
+      empty = Theme.Label("", 34, 160, 800, 60, 10, Theme.Muted, FontStyle.Regular); empty.BackColor = Theme.Card; Controls.Add(empty); empty.BringToFront();
+      Controls.Add(Theme.Label("Expected pay uses current student prices; viewing this list does not change balances.\nOnly tagged events from the latest calendar sync are shown, up to 35 days ahead.", 20, 460, 725, 56, 9, Theme.Muted, FontStyle.Regular));
+      var close = Theme.Button("Close", 760, 492, 100, 32, true); close.DialogResult = DialogResult.Cancel;
+      Controls.Add(close); CancelButton = close; AcceptButton = close;
+      refresh.Interval = 1000; refresh.Tick += delegate { RefreshLessons(); };
+      Shown += delegate { RefreshLessons(); refresh.Start(); };
+      RefreshLessons();
+    }
+    void RefreshLessons() {
+      var cache = getCache(); var rows = UpcomingLessons.Build(ledger, cache, DateTime.UtcNow);
+      bool hasSync = cache != null && !String.IsNullOrEmpty(cache.SyncedUtc);
+      string lastSync = "No successful calendar sync yet";
+      if (hasSync) {
+        try { lastSync = "Last successful sync: " + Time.Local(cache.SyncedUtc).ToString("dd MMM yyyy HH:mm", CultureInfo.InvariantCulture); }
+        catch { lastSync = "Last sync time unavailable"; }
+      }
+      string information = rows.Count + (rows.Count == 1 ? " upcoming lesson" : " upcoming lessons") + "  |  Times: Europe/Vilnius\n" + lastSync + (isSyncing() ? "  |  Sync in progress..." : "");
+      if (details.Text != information) details.Text = information;
+      string emptyText = hasSync ? "No upcoming lessons in the latest calendar sync.\nClose this list and click Sync to check for calendar updates." : "No calendar lessons downloaded yet.\nConnect your calendar in Settings, then click Sync.";
+      if (empty.Text != emptyText) empty.Text = emptyText;
+      empty.Visible = rows.Count == 0;
+      string signature = Json.Write(new { Rows = rows, Currency = ledger.Data.Settings.Currency });
+      if (signature == lastRows) return;
+      list.BeginUpdate();
+      try {
+        list.Items.Clear();
+        foreach (var row in rows) {
+          DateTime local = TimeZoneInfo.ConvertTimeFromUtc(row.StartUtc, Time.Zone);
+          string amount = row.ExpectedPay.HasValue ? row.ExpectedPay.Value.ToString("0.00", CultureInfo.InvariantCulture) + " " + ledger.Data.Settings.Currency : row.PriceNote;
+          var item = new ListViewItem(new string[] { local.ToString("ddd, dd MMM yyyy", CultureInfo.InvariantCulture), local.ToString("HH:mm", CultureInfo.InvariantCulture), row.StudentName, amount, row.CalendarTitle });
+          if (!row.ExpectedPay.HasValue) item.ForeColor = Theme.Amber;
+          list.Items.Add(item);
+        }
+        lastRows = signature;
+      } finally { list.EndUpdate(); }
+    }
+    protected override void Dispose(bool disposing) { if (disposing) refresh.Dispose(); base.Dispose(disposing); }
+  }
   public class Widget : Form {
     readonly Store store; Ledger ledger; CalendarCache cache; readonly bool preview; bool inspection; readonly string root;
-    FlowLayoutPanel students; Panel question; Label total, syncLabel, pendingLabel; Button addStudent, history, sync; NotifyIcon tray;
+    FlowLayoutPanel students; Panel question; Label total, syncLabel, pendingLabel; Button addStudent, history, upcoming, sync; NotifyIcon tray;
     readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
     readonly System.Windows.Forms.Timer settingsTimer = new System.Windows.Forms.Timer();
     bool syncing, modal, shuttingDown, readyLogged; IntPtr desktopParent, lastForeground; DateTime lastAttempt = DateTime.MinValue; string syncStatus = "Connect your Google Calendar";
@@ -444,9 +525,11 @@ namespace LessonLedger {
       total = Theme.Label("0.00 EUR", 22, 91, 350, 43, 26, Theme.Light, FontStyle.Bold); Controls.Add(total);
       Controls.Add(Theme.Label("TOTAL OWED", 24, 137, 350, 20, 8, Theme.Muted, FontStyle.Bold));
       students = new FlowLayoutPanel { Location = new Point(20, 172), Size = new Size(360, 195), AutoScroll = false, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Theme.Background }; Controls.Add(students);
-      addStudent = Theme.Button("+ Student", 22, 381, 110, 30, false); addStudent.Click += delegate { EditStudent(null, null); }; Controls.Add(addStudent);
-      history = Theme.Button("History", 143, 381, 90, 30, false); history.Click += delegate { OpenHistory(); }; Controls.Add(history);
-      sync = Theme.Button("Sync", 290, 381, 88, 30, false); sync.Click += delegate { StartSync(true); }; Controls.Add(sync);
+      addStudent = Theme.Button("+ Student", 22, 381, 98, 30, false); addStudent.Click += delegate { EditStudent(null, null); }; Controls.Add(addStudent);
+      history = Theme.Button("History", 128, 381, 68, 30, false); history.Click += delegate { OpenHistory(); }; Controls.Add(history);
+      upcoming = Theme.Button("Upcoming", 204, 381, 100, 30, false); upcoming.Click += delegate { OpenUpcoming(); }; Controls.Add(upcoming);
+      tips.SetToolTip(upcoming, "View upcoming calendar lessons and their expected pay.");
+      sync = Theme.Button("Sync", 312, 381, 66, 30, false); sync.Click += delegate { StartSync(true); }; Controls.Add(sync);
       question = new Panel { Location = new Point(20, 426), Size = new Size(360, 108), BackColor = Theme.Card, Visible = false }; Controls.Add(question);
       syncLabel = Theme.Label(syncStatus, 22, 548, 350, 21, 8, Theme.Muted, FontStyle.Regular); Controls.Add(syncLabel);
       tips.SetToolTip(syncLabel, "Google Calendar refreshes every 5 minutes. Questions appear at the scheduled start time.");
@@ -605,7 +688,7 @@ namespace LessonLedger {
       // Size the list for every complete row, then place the footer below it.
       // The question card reserves space only while a confirmation is due.
       int actionsTop = students.Bottom + 14;
-      addStudent.Top = history.Top = sync.Top = actionsTop;
+      addStudent.Top = history.Top = upcoming.Top = sync.Top = actionsTop;
       question.Top = sync.Bottom + 15; question.Visible = pending.Count > 0;
       syncLabel.Top = (pending.Count > 0 ? question.Bottom : sync.Bottom) + 14;
       int height = syncLabel.Bottom + 11;
@@ -662,6 +745,9 @@ namespace LessonLedger {
       WithDialog(delegate { using (var history = new HistoryDialog(ledger, ledger.Data.Settings.Currency)) {
         if (history.ShowDialog() == DialogResult.OK && history.SelectedPayment != null) Mutate(delegate { ledger.Undo(history.SelectedPayment); });
       } });
+    }
+    void OpenUpcoming() {
+      WithDialog(delegate { using (var dialog = new UpcomingLessonsDialog(ledger, delegate { return cache; }, delegate { return syncing; })) dialog.ShowDialog(); });
     }
     void ShowError(string message) { MessageBox.Show(message, "Lesson Ledger", MessageBoxButtons.OK, MessageBoxIcon.Information); }
     void StartSync(bool manual) {
@@ -778,7 +864,30 @@ namespace LessonLedger {
       Check(File.Exists(store.FilePath + ".bak") && store.Load().Entries.Count == state.Entries.Count, "atomic save and backup");
       const string fakeFeed = "https://calendar.google.com/calendar/ical/example/private-example/basic.ics"; store.SetFeed(fakeFeed);
       Check(store.GetFeed() == fakeFeed && !Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(folder, "calendar-link.dat"))).Contains(fakeFeed), "private link encrypted at rest");
-      return assertions + " ledger checks passed.\r\n";
+      int ledgerChecks = assertions;
+      var upcomingState = new State(); var upcomingLedger = new Ledger(upcomingState);
+      var alex = new Student { Name = "Alex", CalendarName = "ALEX", Price = 22 }; upcomingState.Students.Add(alex);
+      upcomingState.Students.Add(new Student { Name = "Casey", CalendarName = "CASEY", Price = 0 });
+      upcomingLedger.SetTotals(alex, 1, 8);
+      var fixture = new CalendarCache { Events = new List<ScheduledLesson> {
+        new ScheduledLesson { Key = "later", StudentName = "ALEX", Title = "[lesson] ALEX", StartUtc = "2026-10-24T13:00:00+03:00" },
+        new ScheduledLesson { Key = "past", StudentName = "ALEX", Title = "[lesson] ALEX", StartUtc = "2026-10-24T08:59:59Z" },
+        new ScheduledLesson { Key = "next", StudentName = " alex ", Title = "[lesson] Alex", StartUtc = "2026-10-24T09:30:00Z" },
+        new ScheduledLesson { Key = "unknown", StudentName = "Morgan", Title = "[lesson] Morgan", StartUtc = "2026-10-24T09:45:00Z" },
+        new ScheduledLesson { Key = "no-rate", StudentName = "CASEY", Title = "[lesson] Casey", StartUtc = "2026-10-24T09:50:00Z" }
+      } };
+      DateTime now = new DateTime(2026, 10, 24, 9, 0, 0, DateTimeKind.Utc);
+      string original = Json.Write(upcomingState); var scheduledRows = UpcomingLessons.Build(upcomingLedger, fixture, now);
+      Check(scheduledRows.Select(r => r.Key).SequenceEqual(new string[] { "next", "unknown", "no-rate", "later" }), "upcoming lessons exclude past events and sort by actual UTC time");
+      Check(scheduledRows[0].StudentName == "Alex" && scheduledRows[0].CalendarTitle == "[lesson] Alex", "upcoming lessons match calendar names and retain the original event title");
+      Check(scheduledRows[0].ExpectedPay == 22 && upcomingLedger.Balance(alex) == 8, "upcoming pay uses the current price rather than the existing balance");
+      Check(!scheduledRows[1].ExpectedPay.HasValue && scheduledRows[1].PriceNote == "Student not added", "unmatched calendar students stay visible without an invented price");
+      Check(!scheduledRows[2].ExpectedPay.HasValue && scheduledRows[2].PriceNote == "Price not set", "missing prices are shown explicitly");
+      Check(Json.Write(upcomingState) == original, "viewing upcoming lessons does not change saved lesson or payment data");
+      Check(UpcomingLessons.Build(upcomingLedger, new CalendarCache(), now).Count == 0, "upcoming view handles an empty calendar cache");
+      upcomingState.Settings.TrackingDate = "2026-10-25";
+      Check(UpcomingLessons.Build(upcomingLedger, fixture, now).Count == 0, "upcoming view respects the tracking start date");
+      return ledgerChecks + " ledger checks and " + (assertions - ledgerChecks) + " upcoming lesson checks passed.\r\n";
     }
   }
 }

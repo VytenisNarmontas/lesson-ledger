@@ -19,7 +19,7 @@ Copy-Item -LiteralPath (Get-Command node.exe -CommandType Application).Source -D
 
 If using the portable Node distribution, copy its `node.exe` into `vendor` manually and run the last two commands. Keep the rest of the repository alongside the built executable: the calendar helper and its parser are needed for sync.
 
-The published source excludes Node's executable and generated app binaries. Locally, `vendor/node.exe` and the built `.exe` are ignored by Git. The tested calendar runtime was Node.js 24.19.0.
+The published source excludes Node's executable and generated app binaries. Locally, `vendor/node.exe` and the built `.exe` are ignored by Git. This update was tested with Node.js 24.22.1.
 
 ## Try the fictional demo first
 
@@ -36,8 +36,17 @@ This opens a normal preview window with **Alex, Jamie, Morgan, and Taylor**, fic
 - Press **Paid** for Alex: the unpaid balance and count clear.
 - Open **History**, select the payment, and use **Undo selected payment** to restore it.
 - Use **Edit** to try a balance correction.
+- Open **Upcoming** to see five fictional future events. The list uses current lesson prices, and unmatched Jordan remains visible as **Student not added**.
 
 To recreate the sample records, close the preview and run the preparation command with `--reset`. This replaces the fictional demo ledger and cache only. The demo does not contain a calendar address.
+
+For the missing-price example shown in the README, close the preview and run:
+
+```powershell
+.\vendor\node.exe .\demo\prepare-demo.mjs --reset --upcoming-examples
+```
+
+This keeps the same fictional balances and sets Taylor's future lesson price to zero, so Upcoming displays **Price not set**. Reopen the preview with the command above. Run the preparation command with `--reset` alone to return to the usual sample prices.
 
 ## Connect your own calendar
 
@@ -56,6 +65,20 @@ An unanswered event becomes a question at its start time, not its end. **Yes** r
 If an earlier lesson is already included in an opening balance and also appears as a due question, answer No for that occurrence so it is not charged twice.
 
 This version uses **Europe/Vilnius** for lesson display, tracking-date boundaries, and floating calendar times. The Windows timezone identifier is `FLE Standard Time`. Choosing another currency changes its label only; it does not convert amounts.
+
+## Upcoming lessons
+
+The **Upcoming** button shares the widget's existing action row with **+ Student**, **History**, and **Sync**. It opens a read-only list with **Date**, **Time**, **Student**, **Expected pay**, and **Calendar event** columns.
+
+- Rows are sorted by the actual start instant, including timestamps with different timezone offsets. Displayed dates and times use Europe/Vilnius and follow its daylight-saving rules.
+- Only downloaded events at or after both now and the configured tracking start are included. A future event remains visible even if it already has a recorded lesson answer.
+- Student matching uses the saved calendar name, ignoring surrounding whitespace and case. The original event title is displayed separately.
+- Expected pay is the matched student's current lesson price, not their existing balance, a historical charge, or a duration-based calculation. Unknown students show **Student not added**; non-positive or missing prices show **Price not set**. These rows are kept in the list without an invented amount.
+- The header shows the last successful sync time and whether a sync is in progress. The view refreshes from the updated in-memory cache when a background sync finishes; an unchanged row set is retained without rebuilding it.
+
+Opening the list does not start another download. Use **Sync** on the widget to fetch updates. The existing fetch window ends up to **35 days after the sync**, so events beyond that horizon are not available in this view. Without a successful sync, the list explains how to connect a calendar; an empty synced cache shows a separate no-upcoming-lessons message.
+
+This view changes no balances, lesson decisions, payments, calendar events, storage schema, or startup settings. Actual charges still require the usual confirmation workflow.
 
 ## Corrections and payments
 
@@ -104,6 +127,6 @@ Start-Process -FilePath .\LessonLedger.exe -ArgumentList '--self-test' -Wait -Wi
 Get-Content .\test-results.txt
 ```
 
-The calendar suite checks filtering, recurrence, rescheduling, cancellations, daylight-saving changes, and feed-address restrictions. The ledger checks exercise confirmations, prices, payments, undo rules, saving, and encryption with test records. They write only local test output and isolated `qa` records.
+The calendar suite checks filtering, recurrence, rescheduling, cancellations, daylight-saving changes, and feed-address restrictions. The ledger checks exercise confirmations, prices, payments, undo rules, saving, and encryption with test records. The upcoming checks cover filtering, chronological ordering across offsets, calendar-name matching, original titles, current prices, missing information, unchanged accounting state, empty caches, and the tracking date. They write only local test output and isolated `qa` records.
 
-The publication copy passed **10 calendar tests and 15 ledger checks**. Its native preview was also checked with fictional data for confirmation, Paid, payment undo, and an Edit correction. A fresh real calendar connection, a complete Windows reboot, and disaster recovery were not tested during this review.
+The Upcoming update passed **10 calendar tests, 15 ledger checks, and 8 upcoming-lesson checks**. Fictional-data preview and dialog checks covered the four-button layout, confirmation, missing students and prices, cache refresh while open, retained unchanged rows, and empty/no-sync messages. Additional checks covered the repeated daylight-saving hour and future events with existing answers. A fresh real calendar connection, a complete Windows reboot, and disaster recovery were not tested during this publication update.

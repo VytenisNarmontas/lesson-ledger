@@ -31,6 +31,16 @@ For shorter lessons and other small corrections, I use **Edit** to adjust the cu
 
 The widget normally sits behind other application windows, ready when I show the desktop. It checks the calendar periodically and keeps unanswered questions available until I deal with them.
 
+## A look at the lessons ahead
+
+**Upcoming** sits beside + Student, History, and Sync. It opens a read-only list of downloaded future lessons, showing their date, time, student, expected pay, and original calendar title. Lessons are ordered by their actual start time and displayed in **Europe/Vilnius** time, including daylight-saving changes.
+
+[![Upcoming lessons with fictional prices and explicit missing-student and missing-price labels.](media/upcoming-preview.png)](media/upcoming.png)
+
+*Fictional examples: Alex's next lesson is estimated at €31.50, independently of his unpaid balance. Jordan is marked Student not added; Taylor is marked Price not set.*
+
+Expected pay uses each student's current lesson price. Opening the list adds no charges and changes no balances. It respects the tracking start date, shows the last successful sync, and refreshes if an in-progress sync finishes while it is open. It uses the existing calendar cache, which is fetched up to 35 days ahead, so it is a snapshot of downloaded lessons rather than a separate live calendar view.
+
 ## History makes it easier to correct mistakes
 
 History records lesson confirmations, skipped lessons, balance corrections, and payments. An eligible payment can be undone to restore the previous unpaid balance. If that student has newer changes, I use Edit instead.
